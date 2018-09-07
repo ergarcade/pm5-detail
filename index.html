@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+
+<html>
+
+    <head>
+        <script src="js/eventtarget.js"></script>
+        <script src="js/monitor.js"></script>
+        <script src="js/app.js"></script>
+        <script src="js/ymnnjq.js"></script>
+
+        <script src="js/dragula.min.js"></script>
+        <link rel="stylesheet" href="css/dragula.min.css" type="text/css">
+
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+        <link href="fontawesome-free-5.1.0-web/css/all.css" rel="stylesheet">
+
+        <style>
+        body {
+        }
+        .value {
+            float: right;
+            font-size: larger;
+        }
+        .element {
+            font-size: smaller;
+        }
+        .element:after {
+            content:"\000A";
+            white-space: pre;
+        }
+        #sidebar {
+            height: 100%;
+            width: 15em;
+            position: fixed;
+            z-index: 1;
+            top: 0;
+            left: 0;
+            overflow-x: hidden;
+            padding: 0.5em 1em 1em;
+            background: #eee;
+        }
+        #main {
+            margin-left: 16em;
+            padding: 1em;
+        }
+
+        #notifications > div > div {
+            width: 15em;
+            float: left;
+            border: 1px solid #000;
+            margin: 5px;
+            padding: 10px;
+        }
+        .highlight {
+            background: #000;
+            color: #fff;
+            font-weight: bold;
+        }
+
+        .hidden {
+            display: none;
+        }
+        </style>
+    </head>
+
+    <body>
+        <div id="sidebar">
+
+            <h1 id="title">
+                <span class="logo fa-stack fa-sm">
+                    <i class="fas fa-circle-notch fa-stack-2x"></i>
+                    <i class="fas fa-gamepad fa-stack-1x"></i>
+                </span>
+                <a href="http://ergarcade.com/prods/pm5-detail">pm5-detail</a></h1>
+
+            <hr />
+
+            <div id="description">
+                <p>
+                Display all data provided by the <a href="http://www.concept2.com">Concept2</a>
+                <a href="http://www.concept2.com.au/service/monitors/pm5">Performance Monitor 5</a> (PM5).
+                </p>
+            </div>
+            <hr />
+
+            <div id="configuration">
+                <button id="connect">Connect</button>
+                <button id="disconnect" disabled="disabled">Disconnect</button>
+            </div>
+
+        </div>
+
+        <div id="main">
+            <div id="notifications">
+            </div>
+        </div>
+
+        <div id="debug">
+        </div>
+    </body>
+</html>
