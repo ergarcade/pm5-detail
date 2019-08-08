@@ -3,6 +3,12 @@
 let m = new Monitor();
 
 document.addEventListener('DOMContentLoaded', function() {
+    if (!navigator.bluetooth) {
+        toggleClass(document.querySelector('#unsupported'), 'hidden');
+        document.querySelector('#connect').disabled = true;
+        return;
+    }
+
     let uiConnected = function() {
         document.querySelector('#connect').disabled = true;
         document.querySelector('#disconnect').disabled = false;
