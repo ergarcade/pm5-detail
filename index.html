@@ -6,7 +6,8 @@
         <title>pm5-detail - display various PM5 variables available over BLE interface</title>
 
         <script src="js/eventtarget.js"></script>
-        <script src="js/monitor.js"></script>
+        <script src="js/pm5.js"></script>
+        <script src="js/pm5-printables.js"></script>
         <script src="js/app.js"></script>
         <script src="js/ymnnjq.js"></script>
 
@@ -14,8 +15,6 @@
         <link rel="stylesheet" href="css/dragula.min.css" type="text/css">
 
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-        <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.3.1/css/all.css" integrity="sha384-mzrmE5qonljUremFsqc01SB46JvROS7bZs3IO2EmfFsd15uHvIt+Y8vEf7N7fWAU" crossorigin="anonymous">
 
         <style>
         body {
@@ -84,11 +83,7 @@
         <div id="sidebar">
 
             <h1 id="title">
-                <span class="logo fa-stack fa-sm">
-                    <i class="fas fa-circle-notch fa-stack-2x"></i>
-                    <i class="fas fa-gamepad fa-stack-1x"></i>
-                </span>
-                <a href="http://ergarcade.com/products/pm5-detail">pm5-detail</a></h1>
+                <a href="https://ergarcade.github.io/pm5-detail/">pm5-detail</a></h1>
 
             <hr />
 
@@ -103,7 +98,29 @@
 
             <div id="configuration">
                 <button id="connect">Connect</button>
-                <button id="disconnect" disabled="disabled">Disconnect</button>
+            </div>
+
+            <hr />
+
+            <div id="notes">
+                <h3>Requires</h3>
+                <ul>
+                    <li>Computer (no mobile).</li>
+                    <li>Bluetooth enabled.</li>
+                    <li><a href="https://chrome.google.com">Chrome web browser</a></li>
+                    <li>PM5 only.</li>
+                </ul>
+
+                <h3>Usage</h3>
+                <ul>
+                    <li>Click <strong>Connect</strong> above, then
+                        <a href="https://www.concept2.com/service/software/ergdata/how-to-use/wirelessly-connecting-devices">enable Bluetooth on the PM5</a>.</li>
+                   <li>Accept the connection on your computer.</li>
+                   <li>Be patient; it takes a few seconds to connect.</li>
+                   <li>Start row / skiing / biking!</li>
+                   <li>Click boxes to highlight.</li>
+                   <li>Drag boxes to rearrange.</li>
+                </ul>
             </div>
             <hr />
 

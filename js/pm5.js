@@ -1,6 +1,78 @@
 'use strict';
 
 /*
+ * Minimal usage:
+ *
+ *  function cb_connecting() {
+ *       // stuff to do while browser is connecting to PM5
+ *  }
+ *
+ *  function cb_connected() {
+ *       // do this when browser connects to PM5
+ *  }
+ *
+ *  function cb_disconnected() {
+ *      // stuff to do when disconnected from PM5
+ *  }
+ *
+ *  function cb_message(m) {
+ *      // message received here.
+ *  }
+ *
+ *  m = new PM5(cb_connecting, cb_connected, cb_disconnected, cb_message);
+ *
+ *  // Chrome connections to Bluetooth devices can only occur
+ *  // on user gesture (https://webbluetoothcg.github.io/web-bluetooth/#ua-bluetooth-address).
+ *  document.querySelector('#connect').addEventListener('click', function() {
+ *      if (m.connected()) {
+ *          m.doDisconnect();
+ *      } else {
+ *          m.doConnect();
+ *      }
+ *  });
+ */
+
+/*
+ * From https://developer.mozilla.org/en-US/docs/Web/API/EventTarget
+ */
+var EventTarget = function() {
+    this.listeners = {};
+};
+
+EventTarget.prototype.listeners = null;
+EventTarget.prototype.addEventListener = function(type, callback) {
+    if (!(type in this.listeners)) {
+        this.listeners[type] = [];
+    }
+    this.listeners[type].push(callback);
+};
+
+EventTarget.prototype.removeEventListener = function(type, callback) {
+    if (!(type in this.listeners)) {
+        return;
+    }
+    var stack = this.listeners[type];
+    for (var i = 0, l = stack.length; i < l; i++) {
+        if (stack[i] === callback){
+            stack.splice(i, 1);
+            return;
+        }
+    }
+};
+
+EventTarget.prototype.dispatchEvent = function(event) {
+    if (!(event.type in this.listeners)) {
+        return true;
+    }
+    var stack = this.listeners[event.type].slice();
+
+    for (var i = 0, l = stack.length; i < l; i++) {
+        stack[i].call(this, event);
+    }
+    return !event.defaultPrevented;
+};
+
+/*
  * From the Concept2 Performance Monitor Bluetooth Smart Communications
  * Interface Definition spec, v1.25, 8/29/17 11:19AM.
  *
@@ -98,7 +170,7 @@ const characteristics = {
             service:    services.rowing
         },
         additionalEndOfWorkoutSummaryData2: {
-            id:         'ce06003c-43e5-11e4-916c-0800200c9a66',
+            id:         'ce06003c-43e5-11e4-916c-0800200c9a66', /* multiplexed only */
             service:    services.rowing
         },
         forceCurveData: {
@@ -112,426 +184,52 @@ const characteristics = {
     }
 };
 
-const printables = {
-    empty: function(v) {
-        return v;
-    },
-    ms2hms: function(msecs) {
-        return new Date(msecs).toISOString().substr(11, 8);
-    },
-    secs2hms: function(secs) {
-        return new Date(secs * 1000).toISOString().substr(11, 11);
-    },
-    metres: function(m) {
-        return m.toLocaleString() + 'm';
-    },
-    workoutType: function(wtype) {
-        switch (wtype) {
-            case 0: return 'Just row, no splits'; break;
-            case 1: return 'Just row, splits'; break;
-            case 2: return 'Fixed dist, no splits'; break;
-            case 3: return 'Fixed dist, splits'; break;
-            case 4: return 'Fixed time, no splits'; break;
-            case 5: return 'Fixed time, splits'; break;
-            case 6: return 'Fixed time, interval'; break;
-            case 7: return 'Fixed dist, interval'; break;
-            case 8: return 'Variable, interval'; break;
-            case 9: return 'Variable, undef rest, interval'; break;
-            case 10: return 'Fixed, calorie'; break;
-            case 11: return 'Fixed, watt-minutes'; break;
-            case 12: return 'Fixed cals, interval'; break;
-            default:
-                break;
-        }
-        return 'unknown';
-    },
-    intervalType: function(itype) {
-        switch (itype) {
-            case 0: return 'Time'; break;
-            case 1: return 'Distance'; break;
-            case 2: return 'Rest'; break;
-            case 3: return 'Time, rest undefined'; break;
-            case 4: return 'Distance, rest undefined'; break;
-            case 5: return 'Rest, undefined'; break;
-            case 6: return 'Calorie'; break;
-            case 7: return 'Calorie, rest undefined'; break;
-            case 8: return 'Watt-minute'; break;
-            case 9: return 'Watt-minute, rest undefined'; break;
-            case 255: return 'None';
-            default:
-                break;
-        }
-        return 'unknown';
-    },
-    workoutState: function(wstate) {
-        switch (wstate) {
-            case 0: return 'Wait To Begin'; break;
-            case 1: return 'Workout Row'; break;
-            case 2: return 'Countdown Pause'; break;
-            case 3: return 'Interval Rest'; break;
-            case 4: return 'Interval Work Time'; break;
-            case 5: return 'Interval Work Distance'; break;
-            case 6: return 'Interval Rest End To Work Time'; break;
-            case 7: return 'Interval Rest End To Work Distance'; break;
-            case 8: return 'Interval Work Time To Rest'; break;
-            case 9: return 'Interval Work Distance To Rest'; break;
-            case 10: return 'Workout End'; break;
-            case 11: return 'Terminate'; break;
-            case 12: return 'Workout Logged'; break;
-            case 13: return 'Rearm'; break;
-            default:
-                break;
-        }
-        return 'unknown';
-    },
-    rowingState: function(rstate) {
-        switch (rstate) {
-            case 0: return 'Inactive'; break;
-            case 1: return 'Active'; break;
-            default:
-                break;
-        }
-        return 'unknown';
-    },
-    strokeState: function(sstate) {
-        switch (sstate) {
-            case 0: return 'Waiting To Reach Min Speed'; break;
-            case 1: return 'Waiting To Accelerate'; break;
-            case 2: return 'Driving'; break;
-            case 3: return 'Dwelling After Drive'; break;
-            case 4: return 'Recovery'; break;
-            default:
-                break;
-        }
-        return 'unknown';
-    },
-    workoutDuration: function(wduration) {
-        /* XXX Figure out how to handle this one */
-        /*
-         * enum DurationTypes {
-         *      CSAFE_TIME_DURATION = 0,
-         *      CSAFE_CALORIES_DURATION = 0x40,
-         *      CSAFE_DISTANCE_DURATION = 0x80,
-         *      CSAFE_WATTS_DURATION = 0xc0
-         * }
-         */
-        /*
-        if (data.workoutDurationType == 0x0) {
-            data.workoutDuration *= 0.01;
-        }
-        */
-        return wduration;
-    },
-    workoutDurationType: function(wdurationtype) {
-        switch (wdurationtype) {
-            case 0: return 'Time'; break;
-            case 0x40: return 'Calories'; break;
-            case 0x80: return 'Distance'; break;
-            case 0xc0: return 'Watts'; break;
-            default:
-                break;
-        }
-        return 'unknown';
-    },
-    as_is: function(n) {
-        return n;
-    },
-    fixed: function(n) {
-        return n.toFixed(2);
-    },
-    m_per_second: function(n) {
-        return n.toFixed(2) + "m/s";
-    },
-    heartRate: function(n) {
-        return n == 255 ? 'N/A' : n;
-    },
-    watts: function(n) {
-        return n.toFixed(2).toLocaleString() + 'W';
-    },
-    calories: function(n) {
-        return n.toLocaleString() + 'cals';
-    },
-    metres_fixed: function(n) {
-        return n.toFixed(2).toLocaleString() + 'm';
-    },
-    splitIntervalType: function(n) {
-        return n;
-    }
-};
-
-const fields = {
-    elapsedTime: {
-        label: 'Elapsed Time',
-        printable: printables['secs2hms']
-    },
-    distance: {
-        label: 'Distance',
-        printable: printables['metres'],
-    },
-    workoutType: {
-        label: 'Workout Type',
-        printable: printables['workoutType'],
-    },
-    intervalType: {
-        label: 'Interval Type',
-        printable: printables['intervalType'],
-    },
-    workoutState: {
-        label: 'Workout State',
-        printable: printables['workoutState'],
-    },
-    rowingState: {
-        label: 'Rowing State',
-        printable: printables['rowingState'],
-    },
-    strokeState: {
-        label: 'Stroke State',
-        printable: printables['strokeState'],
-    },
-    totalWorkDistance: {
-        label: 'Total Work Distance',
-        printable: printables['metres'],
-    },
-    workoutDuration: {
-        label: 'Workout Duration',
-        printable: printables['workoutDuration'],
-    },
-    workoutDurationType: {
-        label: 'Workout Duration Type',
-        printable: printables['workoutDurationType'],
-    },
-    dragFactor: {
-        label: 'Drag Factor',
-        printable: printables['as_is'],
-    },
-    speed: {
-        label: 'Speed',
-        printable: printables['m_per_second'],
-    },
-    strokeRate: {
-        label: 'Stroke Rate',
-        printable: printables['as_is'],
-    },
-    heartRate: {
-        label: 'Heart Rate',
-        printable: printables['heartRate'],
-    },
-    currentPace: {
-        label: 'Current Pace',
-        printable: printables['secs2hms'],
-    },
-    averagePace: {
-        label: 'Average Pace',
-        printable: printables['secs2hms'],
-    },
-    restDistance: {
-        label: 'Rest Distance',
-        printable: printables['metres'],
-    },
-    restTime: {
-        label: 'Rest Time',
-        printable: printables['secs2hms'],
-    },
-    intervalCount: {
-        label: 'Interval Count',
-        printable: printables['as_is'],
-    },
-    averagePower: {
-        label: 'Average Power',
-        printable: printables['watts'],
-    },
-    totalCalories: {
-        label: 'Total Calories',
-        printable: printables['calories'],
-    },
-    splitAveragePace: {
-        label: 'Split Average Pace',
-        printable: printables['secs2hms'],
-    },
-    splitAveragePower: {
-        label: 'Split Average Power',
-        printable: printables['watts'],
-    },
-    splitAverageCalories: {
-        label: 'Split Average Calories',
-        printable: printables['calories'],
-    },
-    lastSplitTime: {
-        label: 'Last Split Time',
-        printable: printables['secs2hms'],
-    },
-    lastSplitDistance: {
-        label: 'Last Split Distance',
-        printable: printables['metres'],
-    },
-    driveLength: {
-        label: 'Drive Length',
-        printable: printables['metres_fixed'],
-    },
-    driveTime: {
-        label: 'Drive Time',
-        printable: printables['secs2hms'],
-    },
-    strokeRecoveryTime: {
-        label: 'Stroke Recovery Time',
-        printable: printables['secs2hms'],
-    },
-    strokeDistance: {
-        label: 'Stroke Distance',
-        printable: printables['metres_fixed'],
-    },
-    peakDriveForce: {
-        label: 'Peak Drive Force',
-        printable: printables['watts'],
-    },
-    averageDriveForce: {
-        label: 'Average Drive Force',
-        printable: printables['empty'],
-    },
-    workPerStroke: {
-        label: 'Work Per Stroke',
-        printable: printables['empty'],
-    },
-    strokeCount: {
-        label: 'Stroke Count',
-        printable: printables['as_is'],
-    },
-    strokePower: {
-        label: 'Stroke Power',
-        printable: printables['watts'],
-    },
-    strokeCalories: {
-        label: 'Stroke Calories',
-        printable: printables['calories'],
-    },
-    strokeCount: {
-        label: 'Stroke Count',
-        printable: printables['as_is'],
-    },
-    projectedWorkTime: {
-        label: 'Projected Work Time',
-        printable: printables['secs2hms'],
-    },
-    projectedWorkDistance: {
-        label: 'Projected Work Distance',
-        printable: printables['metres'],
-    },
-    workPerStroke: {
-        label: 'Work Per Stroke',
-        printable: printables['watts'],
-    },
-    splitIntervalTime: {
-        label: 'Split Interval Time',
-        printable: printables['secs2hms'],
-    },
-    splitIntervalDistance: {
-        label: 'Split Interval Distance',
-        printable: printables['metres'],
-    },
-    intervalRestTime: {
-        label: 'Interval Rest Time',
-        printable: printables['secs2hms'],
-    },
-    intervalRestDistance: {
-        label: 'Interval Rest Distance',
-        printable: printables['metres'],
-    },
-    splitIntervalType: {
-        label: 'Split Interval Type',
-        printable: printables['splitIntervalType'],
-    },
-    splitIntervalNumber: {
-        label: 'Split Interval Number',
-        printable: printables['as_is'],
-    },
-    splitIntervalAverageStrokeRate: {
-        label: 'Split Interval Average Stroke Rate',
-        printable: printables['as_is'],
-    },
-    splitIntervalWorkHeartrate: {
-        label: 'Split Interval Work Heart Rate',
-        printable: printables['as_is'],
-    },
-    splitIntervalRestHeartRate: {
-        label: 'Split Interval Rest Heart Rate',
-        printable: printables['as_is'],
-    },
-    splitIntervalAveragePace: {
-        label: 'Split Interval Average Pace',
-        printable: printables['secs2hms'],
-    },
-    splitIntervalTotalCalories: {
-        label: 'Split Interval Total Calories',
-        printable: printables['calories'],
-    },
-    splitIntervalAverageCalories: {
-        label: 'Split Interval Average Calories',
-        printable: printables['calories'],
-    },
-    splitIntervalSpeed: {
-        label: 'Split Interval Speed',
-        printable: printables['secs2hms'],
-    },
-    splitIntervalPower: {
-        label: 'Split Interval Power',
-        printable: printables['watts'],
-    },
-    splitAverageDragFactor: {
-        label: 'Split Average Drag Factor',
-        printable: printables['as_is'],
-    },
-    splitIntervalNumber: {
-        label: 'Split Interval Number',
-        printable: printables['as_is'],
-    },
-    logEntryDate: {
-        label: 'Log Entry Date',
-        printable: printables['empty'],
-    },
-    logEntryTime: {
-        label: 'Log Entry Time',
-        printable: printables['empty'],
-    },
-    timeElapsed: {
-        label: 'Time Elapsed',
-        printable: printables['secs2hms'],
-    },
-    avgStrokeRate: {
-        label: 'Average Stroke Rate',
-        printable: printables['as_is'],
-    },
-    endingHeartRate: {
-        label: 'Ending Heart Rate',
-        printable: printables['as_is'],
-    },
-    averageHeartRate: {
-        label: 'Average Heart Rate',
-        printable: printables['as_is'],
-    },
-    minHeartRate: {
-        label: 'Min Heart Rate',
-        printable: printables['as_is'],
-    },
-    maxHeartRate: {
-        label: 'Max Heart Rate',
-        printable: printables['as_is'],
-    },
-    dragFactorAverage: {
-        label: 'Drag Factor Average',
-        printable: printables['as_is'],
-    },
-    recoveryHeartRate: {
-        label: 'Recovery Heart Rate',
-        printable: printables['as_is'],
-    }
-};
-
-class Monitor {
+class PM5 {
     /*
      */
-    constructor() {
+    constructor(cb_connecting, cb_connected, cb_disconnected, cb_message) {
         this.idObjectMap = new Map();
         this.eventTarget = new EventTarget();
+
+        this.cb_connecting = cb_connecting;
+        this.cb_connected = cb_connected;
+        this.cb_disconnected = cb_disconnected;
+        this.cb_message = cb_message;
+    }
+
+    /*
+     */
+    doConnect() {
+        this.connect()
+        .then(() => {
+            this.cb_connecting();
+            return this.addEventListener('multiplexed-information', this.cb_message)
+        })
+        .then(() => {
+            return this.addEventListener('disconnect', this.cb_disconnected);
+        })
+        .then(() => {
+            this.cb_connected();
+        })
+        .catch(error => {
+            console.log(error);
+        });
+    }
+
+    /*
+     */
+    doDisconnect() {
+        this.removeEventListener('multiplexed-information', this.cb_message)
+        .then(() => {
+            this.disconnect();
+            this.removeEventListener('multiplexed-information', this.cb_message)
+        })
+        .then(() => {
+            return this.removeEventListener('disconnect', this.cb_disconnected);
+        })
+        .catch(error => {
+            console.log(error);
+        });
     }
 
     /*
@@ -576,7 +274,34 @@ class Monitor {
                 break;
 
             case 'force-curve-data':
-                return this._addForceCurveData();
+                /*
+                 * XXX We get this back:
+                 *
+                 *   NotFoundError: No Characteristics matching UUID
+                 *   ce06003d-43e5-11e4-916c-0800200c9a66 found in
+                 *   Service with UUID ce060030-43e5-11e4-916c-0800200c9a66.
+                 *
+                 * It _looks_ like this characteristic doesn't appear
+                 * in this service as per the spec. Have to get in touch
+                 * with Concept2 to see if this is the case, and what
+                 * service we need to associate this characteristic with.
+                 */
+                // return this._addForceCurveData();
+                break;
+
+            case 'additional-workout-end':
+                return this._addAdditionalEndOfWorkoutSummaryData();
+                break;
+
+            case 'heart-rate-belt-information':
+                return this._addHeartRateBeltInformation();
+                break;
+
+            case 'additional-workout-end2':
+                return this._addAdditionalEndOfWorkoutSummaryData2();
+                break;
+
+            default:
                 break;
         }
     }
@@ -585,6 +310,14 @@ class Monitor {
      */
     removeEventListener(type, callback) {
         this.eventTarget.removeEventListener(type, callback);
+
+        /*
+         * We can only modify characteristics if we are connected.
+         */
+        if (!this.connected()) {
+            return Promise.resolve();
+        }
+
         switch (type) {
             case 'general-status':
                 return this._removeGeneralStatusListener();
@@ -625,6 +358,21 @@ class Monitor {
             case 'force-curve-data':
                 return this._removeForceCurveData();
                 break;
+
+            case 'additional-workout-end':
+                return this._removeAdditionalEndOfWorkoutSummaryData();
+                break;
+
+            case 'heart-rate-belt-information':
+                return this._removeHeartRateBeltInformation();
+                break;
+
+            case 'additional-workout-end2':
+                return this._removeAdditionalEndOfWorkoutSummaryData2();
+                break;
+
+            default:
+                break;
         }
     }
 
@@ -649,8 +397,9 @@ class Monitor {
         })
         .then(device => {
             this.device = device;
-            this.device.addEventListener('gattserverdisconnected', () => {
+            this.device.addEventListener('gattserverdisconnected', _gattDisconnect => {
                 console.log('gattserverdisconnected');
+                this.device.removeEventListener('gattserverdisconnected', _gattDisconnect);
                 this.idObjectMap.clear();
                 this.eventTarget.dispatchEvent({ type: 'disconnect'});
             });
@@ -659,6 +408,10 @@ class Monitor {
         .then(server => {
             this.server = server;
             return Promise.resolve();
+        })
+        .catch(error => {
+            console.log(error);
+            return Promise.reject(error);
         });
     }
 
@@ -666,10 +419,10 @@ class Monitor {
      */
     disconnect() {
         if (!this.connected()) {
-            return Promise.resolve();
+            console.log("disconnect: wasn't connected");
+            return;
         }
-        /* try: removeEventListener here, before we ask to disconnect */
-        return this.device.gatt.disconnect();
+        this.device.gatt.disconnect();
     }
 
     /*
@@ -691,6 +444,10 @@ class Monitor {
             .then(s => {
                 this.idObjectMap.set(service.id, s);
                 return Promise.resolve(s);
+            })
+            .catch(error => {
+                console.log('getPrimaryService(' + service.id + ')');
+                return Promise.reject(error);
             });
     }
 
@@ -699,11 +456,12 @@ class Monitor {
      */
     _cbForceCurveData(monitor, e) {
         const v = new Uint8Array(e.target.value.buffer);
-        const numCharacteristics = (v[0] & 0xf0) >> 4;
+        const numCharacteristics = (v[0] >> 4) & 0x0f;
         const numDataPoints = v[0] & 0x0f;
+        const sequenceNumber = v[1];
         let data = [];
 
-        for (let i = 0; i < numDataPoints; i++) {
+        for (let i = 2; i <= numDataPoints*2; i += 2) {
             data.push(v[i] + (v[i+1] << 8));
         }
 
@@ -714,6 +472,7 @@ class Monitor {
             data: {
                 numCharacteristics: numCharacteristics,
                 numDataPoints: numDataPoints,
+                sequeneNumber: sequenceNumber,
                 data: data
             }
         };
@@ -800,8 +559,7 @@ class Monitor {
     _extractAdditionalStatus(e, multiplexed = false) {
         const o = multiplexed ? 1 : 0;
         const v = new Uint8Array(e.target.value.buffer);
-
-        return {
+        const r = {
             elapsedTime:        (v[o+0] + (v[o+1] << 8) + (v[o+2] << 16)) * 0.01,
             speed:              (v[o+3] + (v[o+4] << 8)) * 0.001,
             strokeRate:         v[o+5],
@@ -811,6 +569,12 @@ class Monitor {
             restDistance:       (v[o+11] + (v[o+12] << 8)),
             restTime:           (v[o+13] + (v[o+14] << 8) + (v[o+15] << 16)) * 0.01
         };
+
+        if (multiplexed) {
+            r.averagePower = v[o+16] + (v[o+17] << 16);
+        }
+
+        return r;
     }
 
     /*
@@ -842,18 +606,30 @@ class Monitor {
     _extractAdditionalStatus2(e, multiplexed = false) {
         const o = multiplexed ? 1 : 0;
         const v = new Uint8Array(e.target.value.buffer);
+        const r = {};
 
-        return {
-            elapsedTime:            (v[o+0] + (v[o+1] << 8) + (v[o+2] << 16)) * 0.01,
-            intervalCount:          v[o+3],
-            averagePower:           (v[o+4] + (v[o+5] << 8)),
-            totalCalories:          (v[o+6] + (v[o+7] << 8)),
-            splitAveragePace:       (v[o+8] + (v[o+9] << 8)) * 0.01,
-            splitAveragePower:      (v[o+10] + (v[o+11] << 8)),
-            splitAverageCalories:   (v[o+12] + (v[o+13] << 8)),
-            lastSplitTime:          (v[o+14] + (v[o+15] << 8) + (v[o+16] << 16)),
-            lastSplitDistance:      (v[o+17] + (v[o+18] << 8) + (v[o+19] << 16))
+        if (multiplexed) {
+            r.elapsedTime =           (v[o+0] + (v[o+1] << 8) + (v[o+2] << 16)) * 0.01;
+            r.intervalCount =         v[o+3];
+            r.totalCalories =         (v[o+4] + (v[o+5] << 8));
+            r.splitAveragePace =      (v[o+6] + (v[o+7] << 8)) * 0.01;
+            r.splitAveragePower =     (v[o+8] + (v[o+9] << 8));
+            r.splitAverageCalories =  (v[o+10] + (v[o+11] << 8));
+            r.lastSplitTime =         (v[o+12] + (v[o+13] << 8) + (v[o+14] << 16));
+            r.lastSplitDistance =     (v[o+15] + (v[o+16] << 8) + (v[o+17] << 16));
+        } else {
+            r.elapsedTime =           (v[o+0] + (v[o+1] << 8) + (v[o+2] << 16)) * 0.01;
+            r.intervalCount =         v[o+3];
+            r.averagePower =          (v[o+4] + (v[o+5] << 8));
+            r.totalCalories =         (v[o+6] + (v[o+7] << 8));
+            r.splitAveragePace =      (v[o+8] + (v[o+9] << 8)) * 0.01;
+            r.splitAveragePower =     (v[o+10] + (v[o+11] << 8));
+            r.splitAverageCalories =  (v[o+12] + (v[o+13] << 8));
+            r.lastSplitTime =         (v[o+14] + (v[o+15] << 8) + (v[o+16] << 16));
+            r.lastSplitDistance =     (v[o+17] + (v[o+18] << 8) + (v[o+19] << 16));
         };
+
+        return r;
     }
 
     /*
@@ -886,19 +662,32 @@ class Monitor {
     _extractStrokeData(e, multiplexed = false) {
         const o = multiplexed ? 1 : 0;
         const v = new Uint8Array(e.target.value.buffer);
+        const r = {};
 
-        return {
-            elapsedTime:            (v[o+0] + (v[o+1] << 8) + (v[o+2] << 16)) * 0.01,
-            distance:               (v[o+3] + (v[o+4] << 8) + (v[o+5] << 16)) * 0.1,
-            driveLength:            v[o+6] * 0.01,
-            driveTime:              v[o+7] * 0.01,
-            strokeRecoveryTime:     (v[o+8] + (v[o+9] << 8)) * 0.01,
-            strokeDistance:         (v[o+10] + (v[o+11] << 8)) * 0.01,
-            peakDriveForce:         (v[o+12] + (v[o+13] << 8)) * 0.1,   /* XXX pounds */
-            averageDriveForce:      (v[o+14] + (v[o+15] << 8)) * 0.1,   /* XXX pounds */
-            workPerStroke:          (v[o+16] + (v[o+17] << 8)),
-            strokeCount:            (v[o+18] + (v[o+19] << 8))
-        };
+        if (multiplexed) {
+            r.elapsedTime =           (v[o+0] + (v[o+1] << 8) + (v[o+2] << 16)) * 0.01;
+            r.distance =              (v[o+3] + (v[o+4] << 8) + (v[o+5] << 16)) * 0.1;
+            r.driveLength =           v[o+6] * 0.01;
+            r.driveTime =             v[o+7] * 0.01;
+            r.strokeRecoveryTime =    (v[o+8] + (v[o+9] << 8)) * 0.01;
+            r.strokeDistance =        (v[o+10] + (v[o+11] << 8)) * 0.01;
+            r.peakDriveForce =        (v[o+12] + (v[o+13] << 8)) * 0.1;   /* XXX pounds */
+            r.averageDriveForce =     (v[o+14] + (v[o+15] << 8)) * 0.1;   /* XXX pounds */
+            r.strokeCount =           (v[o+16] + (v[o+17] << 8));
+        } else {
+            r.elapsedTime =           (v[o+0] + (v[o+1] << 8) + (v[o+2] << 16)) * 0.01;
+            r.distance =              (v[o+3] + (v[o+4] << 8) + (v[o+5] << 16)) * 0.1;
+            r.driveLength =           v[o+6] * 0.01;
+            r.driveTime =             v[o+7] * 0.01;
+            r.strokeRecoveryTime =    (v[o+8] + (v[o+9] << 8)) * 0.01;
+            r.strokeDistance =        (v[o+10] + (v[o+11] << 8)) * 0.01;
+            r.peakDriveForce =        (v[o+12] + (v[o+13] << 8)) * 0.1;   /* XXX pounds */
+            r.averageDriveForce =     (v[o+14] + (v[o+15] << 8)) * 0.1;   /* XXX pounds */
+            r.workPerStroke =         (v[o+16] + (v[o+17] << 8));
+            r.strokeCount =           (v[o+18] + (v[o+19] << 8));
+        }
+
+        return r;
     }
 
     /*
@@ -928,15 +717,26 @@ class Monitor {
     _extractAdditionalStrokeData(e, multiplexed = false) {
         const o = multiplexed ? 1 : 0;
         const v = new Uint8Array(e.target.value.buffer);
+        const r = {};
 
-        return {
-            elapsedTime:            (v[o+0] + (v[o+1] << 8) + (v[o+2] << 16)) * 0.01,
-            strokePower:            (v[o+3] + (v[o+4] << 8)),
-            strokeCalories:         (v[o+5] + (v[o+6] << 8)),
-            strokeCount:            (v[o+7] + (v[o+8] << 8)),
-            projectedWorkTime:      (v[o+9] + (v[o+10] << 8) + (v[o+11] << 16)),
-            projectedWorkDistance:  (v[o+12] + (v[o+13] << 8) + (v[o+14] << 16))
-        };
+        if (multiplexed) {
+            r.elapsedTime =           (v[o+0] + (v[o+1] << 8) + (v[o+2] << 16)) * 0.01;
+            r.strokePower =           (v[o+3] + (v[o+4] << 8));
+            r.strokeCalories =        (v[o+5] + (v[o+6] << 8));
+            r.strokeCount =           (v[o+7] + (v[o+8] << 8));
+            r.projectedWorkTime =     (v[o+9] + (v[o+10] << 8) + (v[o+11] << 16));
+            r.projectedWorkDistance = (v[o+12] + (v[o+13] << 8) + (v[o+14] << 16));
+            r.workPerStroke =         (v[o+15] + (v[o+16] << 8));
+        } else {
+            r.elapsedTime =           (v[o+0] + (v[o+1] << 8) + (v[o+2] << 16)) * 0.01;
+            r.strokePower =           (v[o+3] + (v[o+4] << 8));
+            r.strokeCalories =        (v[o+5] + (v[o+6] << 8));
+            r.strokeCount =           (v[o+7] + (v[o+8] << 8));
+            r.projectedWorkTime =     (v[o+9] + (v[o+10] << 8) + (v[o+11] << 16));
+            r.projectedWorkDistance = (v[o+12] + (v[o+13] << 8) + (v[o+14] << 16));
+        }
+
+        return r;
     }
 
     /*
@@ -1060,22 +860,26 @@ class Monitor {
     _extractEndOfWorkoutSummary(e, multiplexed = false) {
         const o = multiplexed ? 1 : 0;
         const v = new Uint8Array(e.target.value.buffer);
+        const r = {};
 
-        return {
-            logEntryDate:       (v[o+0] + (v[o+1] << 8)),
-            logEntryTime:       (v[o+2] + (v[o+3] << 8)),
-            timeElapsed:        (v[o+4] + (v[o+5] << 8) + (v[o+6] << 16)) * 0.01,
-            distance:           (v[o+7] + (v[o+8] << 8) + (v[o+9] << 16)) * 0.1,
-            avgStrokeRate:      v[o+10],
-            endingHeartRate:    v[o+11],
-            averageHeartRate:   v[o+12],
-            minHeartRate:       v[o+13],
-            maxHeartRate:       v[o+14],
-            dragFactorAverage:  v[o+15],
-            recoveryHeartRate:  v[o+16],
-            workoutType:        v[o+17],
-            averagePace:        (v[o+18] + (v[o+19] << 8)) * 0.1
-        };
+        r.logEntryDate =      (v[o+0] + (v[o+1] << 8));
+        r.logEntryTime =      (v[o+2] + (v[o+3] << 8));
+        r.timeElapsed =       (v[o+4] + (v[o+5] << 8) + (v[o+6] << 16)) * 0.01;
+        r.distance =          (v[o+7] + (v[o+8] << 8) + (v[o+9] << 16)) * 0.1;
+        r.avgStrokeRate =     v[o+10];
+        r.endingHeartRate =   v[o+11];
+        r.averageHeartRate =  v[o+12];
+        r.minHeartRate =      v[o+13];
+        r.maxHeartRate =      v[o+14];
+        r.dragFactorAverage = v[o+15];
+        r.recoveryHeartRate = v[o+16];
+        r.workoutType =       v[o+17];
+
+        if (!multiplexed) {
+            r.averagePace = (v[o+18] + (v[o+19] << 8)) * 0.1;
+        }
+
+        return r;
     }
 
     /*
@@ -1093,10 +897,103 @@ class Monitor {
 
     /*
      */
+    _extractAdditionalEndOfWorkoutSummary(e, multiplexed = false) {
+        const o = multiplexed ? 1 : 0;
+        const v = new Uint8Array(e.target.value.buffer);
+        const r = {};
+
+        r.logEntryDate =        (v[o+0] + (v[o+1] << 8));
+        r.logEntryTime =        (v[o+2] + (v[o+3] << 8));
+
+        if (!multiplexed) {
+            r.splitIntervalType =   v[o+4];
+        }
+
+        r.splitIntervalSize =   (v[o+5] + (v[o+6] << 8));
+        r.splitIntervalCount =  v[o+7];
+        r.totalCalories =       (v[o+8] + (v[o+9] << 8));
+        r.watts =               (v[o+10] + (v[o+11] << 8));
+        r.totalRestDistance =   (v[o+12] + (v[o+13] << 8) + (v[o+14] << 16));
+        r.intervalRestTime =    (v[o+15] + (v[o+16] << 8));
+        r.averageCalories =     (v[o+17] + (v[o+18] << 8));
+
+        return r;
+    }
+
+    /*
+     */
+    _cbAdditionalEndOfWorkoutSummaryData(monitor, e, multiplexed = false) {
+        const event = {
+            type: multiplexed ? 'multiplexed-information' : 'additional-workout-end',
+            source: monitor,
+            raw: e.target.value,
+            data: monitor._extractAdditionalEndOfWorkoutSummary(e, multiplexed)
+        };
+
+        monitor.eventTarget.dispatchEvent(event);
+    }
+
+    /*
+     */
+    _extractHeartRateBeltInformation(e, multiplexed = false) {
+        const o = multiplexed ? 1 : 0;
+        const v = new Uint8Array(e.target.value.buffer);
+        const r = {};
+
+        r.manufacturerId =  v[o+0];
+        r.deviceType =      v[o+1];
+        r.beltId =          v[o+2] + (v[o+3] << 8) + (v[o+4] << 16) + (v[o+5] << 24);
+
+        return r;
+    }
+
+    /*
+     */
+    _cbHeartRateBeltInformation(monitor, e, multiplexed = false) {
+        const event = {
+            type: multiplexed ? 'multiplexed-information' : 'heart-rate-belt-information',
+            source: monitor,
+            raw: e.target.value,
+            data: monitor._extractHeartRateBeltInformation(e, multiplexed)
+        };
+
+        monitor.eventTarget.dispatchEvent(event);
+    }
+
+    /*
+     */
+    _extractAdditionalEndOfWorkoutSummaryData2(e, multiplexed = false) {
+        const o = multiplexed ? 1 : 0;
+        const v = new Uint8Array(e.target.value.buffer);
+        const r = {};
+
+        r.logEntryDate =      (v[o+0] + (v[o+1] << 8));
+        r.logEntryTime =      (v[o+2] + (v[o+3] << 8));
+        r.averagePace =       (v[o+4] + (v[o+5] << 8));
+        r.gameIdentifierWorkoutVerified = v[o+6];
+        r.gameScore =         (v[o+7] + (v[o+8] << 8));
+        r.ergMachineType =    v[o+9];
+
+        return r;
+    }
+
+    /*
+     */
+    _cbAdditionalEndOfWorkoutSummaryData2(monitor, e, multiplexed = false) {
+        const event = {
+            type: multiplexed ? 'multiplexed-information' : 'additional-workout-end2',
+            source: monitor,
+            raw: e.target.value,
+            data: monitor._extractAdditionalEndOfWorkoutSummaryData2(e, multiplexed)
+        };
+
+        monitor.eventTarget.dispatchEvent(event);
+    }
+
+    /*
+     */
     _cbMultiplexedInformation(monitor, e) {
         const characteristic = e.target.value.getUint8();
-
-        /* up to here */
 
         /* XXX make this a jump table */
         switch (characteristic) {
@@ -1108,11 +1005,9 @@ class Monitor {
             case 0x37: monitor._cbSplitIntervalData(monitor, e, true); break;
             case 0x38: monitor._cbAdditionalSplitIntervalData(monitor, e, true); break;
             case 0x39: monitor._cbEndOfWorkoutSummaryData(monitor, e, true); break;
-            /*
             case 0x3a: monitor._cbAdditionalEndOfWorkoutSummaryData(monitor, e, true); break;
             case 0x3b: monitor._cbHeartRateBeltInformation(monitor, e, true); break;
             case 0x3c: monitor._cbAdditionalEndOfWorkoutSummaryData2(monitor, e, true); break;
-            */
             default:
                 console.log('unhandled characteristic ' + characteristic.toString(16));
                 break;
@@ -1135,6 +1030,10 @@ class Monitor {
             .then(c => {
                 this.idObjectMap.set(characteristic.id, c);
                 return Promise.resolve(c);
+            })
+            .catch(error => {
+                console.log('getCharacteristic(' + characteristic.id + ') failed: ' + error);
+                return Promise.reject(error);
             });
     }
 
@@ -1142,6 +1041,7 @@ class Monitor {
      */
     _setupCharacteristicValueListener(characteristic, callback) {
         const monitor = this;
+
         return this._getCharacteristic(characteristic)
             .then(c => {
                 return c.startNotifications();
@@ -1151,6 +1051,10 @@ class Monitor {
                     callback(monitor, e);
                 });
                 return Promise.resolve();
+            })
+            .catch(error => {
+                console.log('_setupCharacteristicValueListener(' + characteristic.id + ') failed: ' + error);
+                return Promise.reject(error);
             });
     }
 
@@ -1158,6 +1062,7 @@ class Monitor {
      */
     _teardownCharacteristicValueListener(characteristic, callback) {
         const monitor = this;
+
         return this._getCharacteristic(characteristic)
             .then(c => {
                 return c.stopNotifications();
@@ -1167,6 +1072,10 @@ class Monitor {
                     callback(monitor, e);
                 });
                 return Promise.resolve();
+            })
+            .catch(error => {
+                console.log('_teardownCharacteristicValueListener(' + characteristic.id + ') failed: ' + error);
+                return Promise.reject(error);
             });
     }
 
@@ -1219,7 +1128,7 @@ class Monitor {
     }
 
     _addAdditionalStatus() {
-        return this._teardownCharacteristicValueListener(
+        return this._setupCharacteristicValueListener(
                 characteristics.rowingService.additionalStatus, this._cbAdditionalStatus
         );
     }
@@ -1231,19 +1140,19 @@ class Monitor {
     }
 
     _addAdditionalStatus2() {
-        return this._teardownCharacteristicValueListener(
-                characteristics.rowingService.additionalStatus, this._cbAdditionalStatus2
+        return this._setupCharacteristicValueListener(
+                characteristics.rowingService.additionalStatus2, this._cbAdditionalStatus2
         );
     }
 
     _removeAdditionalStatus2() {
         return this._teardownCharacteristicValueListener(
-                characteristics.rowingService.additionalStatus, this._cbAdditionalStatus2
+                characteristics.rowingService.additionalStatus2, this._cbAdditionalStatus2
         );
     }
 
     _addStrokeData() {
-        return this._teardownCharacteristicValueListener(
+        return this._setupCharacteristicValueListener(
                 characteristics.rowingService.strokeData, this._cbStrokeData
         );
     }
@@ -1255,7 +1164,7 @@ class Monitor {
     }
 
     _addAdditionalStrokeData() {
-        return this._teardownCharacteristicValueListener(
+        return this._setupCharacteristicValueListener(
                 characteristics.rowingService.additionalStrokeData, this._cbAdditionalStrokeData
         );
     }
@@ -1299,6 +1208,43 @@ class Monitor {
     _removeForceCurveData() {
         return this._teardownCharacteristicValueListener(
                 characteristics.rowingService.forceCurveData, this._cbForceCurveData
+        );
+    }
+
+    _addAdditionalEndOfWorkoutSummaryData() {
+        return this._setupCharacteristicValueListener(
+                characteristics.rowingService.forceCurveData, this._cbAdditionalEndOfWorkoutSummaryData
+        );
+    }
+
+    _removeAdditionalEndOfWorkoutSummaryData() {
+        return this._teardownCharacteristicValueListener(
+                characteristics.rowingService.forceCurveData, this._cbAdditionalEndOfWorkoutSummaryData
+        );
+    }
+
+    _addHeartRateBeltInformation() {
+        return this._setupCharacteristicValueListener(
+                characteristics.rowingService.forceCurveData, this._cbHeartRateBeltInformation
+        );
+    }
+
+    _removeHeartRateBeltInformation() {
+        return this._teardownCharacteristicValueListener(
+                characteristics.rowingService.forceCurveData, this._cbHeartRateBeltInformation
+        );
+    }
+
+
+    _addAdditionalEndOfWorkoutSummaryData2() {
+        return this._setupCharacteristicValueListener(
+                characteristics.rowingService.forceCurveData, this._cbAdditionalEndOfWorkoutSummaryData2
+        );
+    }
+
+    _removeAdditionalEndOfWorkoutSummaryData2() {
+        return this._teardownCharacteristicValueListener(
+                characteristics.rowingService.forceCurveData, this._cbAdditionalEndOfWorkoutSummaryData2
         );
     }
 
@@ -1390,6 +1336,7 @@ class Monitor {
             })
             .catch(error => {
                 console.log(error);
+                return Promise.reject(error);
             });
     }
 };

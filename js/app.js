@@ -1,6 +1,6 @@
 'use strict';
 
-let m = new Monitor();
+let m;
 
 document.addEventListener('DOMContentLoaded', function() {
     if (!navigator.bluetooth) {
@@ -10,18 +10,18 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     let uiConnected = function() {
-        document.querySelector('#connect').disabled = true;
-        document.querySelector('#disconnect').disabled = false;
+        document.querySelector('#connect').disabled = false;
+        document.querySelector('#connect').innerText = 'Disconnect';
     };
 
     let uiPending = function() {
         document.querySelector('#connect').disabled = true;
-        document.querySelector('#disconnect').disabled = true;
+        document.querySelector('#connect').innerText = 'Connecting';
     };
 
     let uiDisconnected = function() {
         document.querySelector('#connect').disabled = false;
-        document.querySelector('#disconnect').disabled = true;
+        document.querySelector('#connect').innerText = 'Connect';
 
         let e = document.querySelector('#notifications');
         while (e.firstChild) {
@@ -29,16 +29,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     };
 
-    let cbDisconnected = function() {
-        console.log('cbDisconnected');
-        this.removeEventListener('multiplexed-information', cbMultiplexed)
-        this.removeEventListener('force-curve', cbForceCurve);
-        this.removeEventListener('disconnect', cbDisconnected);
-
-        uiDisconnected();
-    };
-
-    let cbMultiplexed = function(e) {
+    let uiMessage = function(e) {
         let div = document.getElementById(e.type);
         if (!div) {
             div = document.createElement('div');
@@ -58,7 +49,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                     let desc = document.createElement('span');
                     desc.className = 'element';
-                    desc.textContent = fields[k].label;
+                    desc.textContent = pm5fields[k].label;
 
                     s = document.createElement('span');         /* create item */
                     s.className = 'value ' + k;
@@ -71,53 +62,19 @@ document.addEventListener('DOMContentLoaded', function() {
                         toggleClass(this, 'highlight');
                     });
                 }
-                s.textContent = fields[k].printable(e.data[k]);
+                s.textContent = pm5fields[k].printable(e.data[k]);
             }
         }
-    };
-
-    let cbForceCurve = function(e) {
-        /*
-        console.log('force curve');
-        console.log(e);
-        */
     };
 
     document.querySelector('#connect').addEventListener('click', function() {
         uiPending();
 
-        m.connect()
-        .then(() => {
-            return m.getMonitorInformation()
-        })
-        .then(information => {
-            return m.addEventListener('multiplexed-information', cbMultiplexed)
-            .then(() => {
-                return m.addEventListener('force-curve', cbForceCurve)
-            })
-            .then(() => {
-                uiConnected();
-                return m.addEventListener('disconnect', cbDisconnected);
-            })
-            .catch(error => {
-                uiDisconnected();
-                console.log(error);
-            });
-        })
-        .catch(error => {
-            uiDisconnected();
-            console.log(error);
-        });
-    });
-
-    document.querySelector('#disconnect').addEventListener('click', function() {
-        m.removeEventListener('multiplexed-information', cbMultiplexed)
-        .then(() => {
-            return m.removeEventListener('force-curve', cbForceCurve);
-        })
-        .then(() => {
-            return m.disconnect();
-        });
+        if (m.connected()) {
+            m.doDisconnect();
+        } else {
+            m.doConnect();
+        }
     });
 
     /*
@@ -137,4 +94,6 @@ document.addEventListener('DOMContentLoaded', function() {
             toggleClass(this, 'hidden');
         });
     });
+
+    m = new PM5(uiPending, uiConnected, uiDisconnected, uiMessage);
 });
