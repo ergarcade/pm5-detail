@@ -205,6 +205,7 @@ class PM5 {
         })
         .catch(error => {
             console.log(error);
+            this.cb_disconnected();
         });
     }
 
